@@ -1,0 +1,29 @@
+# One-time cluster bootstrap: the shared ClusterQueue cohort + ResourceFlavor
+# that every tenant's per-namespace LocalQueue binds to (name must match
+# `k8s.cluster_queue_name` in configs/config.yaml, default "cluster-queue").
+# This is platform setup, not something Tenant Service provisions itself —
+# see the GPU platform spec's "one ClusterQueue cohort shared across
+# tenants" decision. Apply once per cluster: kubectl apply -f kueue-bootstrap.yaml
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+spec: {}
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: cluster-queue
+spec:
+  namespaceSelector: {} # matches all namespaces' LocalQueues
+  resourceGroups:
+  - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+    flavors:
+    - name: default-flavor
+      resources:
+      - name: "cpu"
+        nominalQuota: 16
+      - name: "memory"
+        nominalQuota: 16Gi
+      - name: "nvidia.com/gpu"
+        nominalQuota: 1

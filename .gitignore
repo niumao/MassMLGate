@@ -1,0 +1,5 @@
+# Superpowers skill framework local state
+.superpowers/
+
+# Git worktrees created for isolated feature/plan work
+.worktrees/

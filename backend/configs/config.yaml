@@ -1,0 +1,36 @@
+server:
+  addr: ":8080"
+  static_dir: "../web/dist"
+
+database:
+  dsn: "postgres://tenant_service:tenant_service@localhost:5432/tenant_service?sslmode=disable"
+
+jwt:
+  secret: "dev-secret-change-me"
+  expiry_hours: 8
+
+bootstrap:
+  admin_email: "admin@platform.local"
+  admin_password: "admin123"
+  default_tenant_name: "Default Tenant"
+  default_tenant_namespace: "default"
+  default_tenant_admin_email: "tenant-admin@default.local"
+  default_tenant_admin_password: "changeme123"
+  default_member_email: "user@default.local"
+  default_member_password: "changeme123"
+
+k8s:
+  enabled: false
+  kubeconfig: ""
+  cluster_queue_name: "cluster-queue"
+
+prometheus:
+  url: ""
+
+alerting:
+  namespace: "monitoring"
+  selector_label: "alertmanagerConfig"
+  selector_value: "tenant-service"
+
+test_runs:
+  timeout_minutes: 30
