@@ -29,7 +29,7 @@ func main() {
 	provisioner := k8s.NewClientGoProvisioner(clientset, dynamicClient, "cluster-queue")
 	wsProvisioner := k8s.NewClientGoWorkspaceProvisioner(clientset)
 
-	tenant := &biz.Tenant{Namespace: "claude-sts-test", QuotaCPU: 2000, QuotaMemory: 4 << 30, QuotaGPU: 0}
+	tenant := &biz.Tenant{Namespace: "sts-test", QuotaCPU: 2000, QuotaMemory: 4 << 30, QuotaGPU: 0}
 	must(provisioner.EnsureTenant(ctx, tenant), "EnsureTenant")
 	ns := "mlops-t-" + tenant.Namespace
 	fmt.Println("OK: tenant namespace ready:", ns)

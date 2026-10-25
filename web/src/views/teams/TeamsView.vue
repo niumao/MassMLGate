@@ -6,6 +6,7 @@ import {
 import type { DataTableColumns } from 'naive-ui'
 import client from '../../api/client'
 import type { Team, User } from '../../types'
+import { coresToMillicores, millicoresToCores, mbToBytes, bytesToMB } from '../../utils/units'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -43,7 +44,8 @@ function openCreate() {
 
 async function submitCreate() {
   try {
-    await client.post('/teams', createForm.value)
+    const { quotaCpu, quotaMemory, quotaGpu, ...rest } = createForm.value
+    await client.post('/teams', { ...rest, quotaCpu: coresToMillicores(quotaCpu), quotaMemory: mbToBytes(quotaMemory), quotaGpu })
     message.success('Team created')
     showCreate.value = false
     await load()
@@ -59,14 +61,15 @@ const editForm = ref({ quotaCpu: 0, quotaMemory: 0, quotaGpu: 0 })
 
 function openEdit(t: Team) {
   editTarget.value = t
-  editForm.value = { quotaCpu: t.quotaCpu, quotaMemory: t.quotaMemory, quotaGpu: t.quotaGpu }
+  editForm.value = { quotaCpu: millicoresToCores(t.quotaCpu), quotaMemory: bytesToMB(t.quotaMemory), quotaGpu: t.quotaGpu }
   showEdit.value = true
 }
 
 async function submitEdit() {
   if (!editTarget.value) return
   try {
-    await client.patch(`/teams/${editTarget.value.id}`, editForm.value)
+    const { quotaCpu, quotaMemory, quotaGpu } = editForm.value
+    await client.patch(`/teams/${editTarget.value.id}`, { quotaCpu: coresToMillicores(quotaCpu), quotaMemory: mbToBytes(quotaMemory), quotaGpu })
     message.success('Quota updated')
     showEdit.value = false
     await load()
@@ -124,8 +127,8 @@ const userOptions = () => users.value.map((u) => ({ label: u.email, value: u.id 
 
 const columns: DataTableColumns<Team> = [
   { title: 'Name', key: 'name' },
-  { title: 'CPU quota (m)', key: 'quotaCpu' },
-  { title: 'Memory quota (bytes)', key: 'quotaMemory' },
+  { title: 'CPU quota (cores)', key: 'quotaCpu', render: (row) => millicoresToCores(row.quotaCpu) },
+  { title: 'Memory quota (MB)', key: 'quotaMemory', render: (row) => Math.round(bytesToMB(row.quotaMemory)) },
   { title: 'GPU quota', key: 'quotaGpu' },
   {
     title: '',
@@ -151,8 +154,8 @@ const columns: DataTableColumns<Team> = [
   <n-modal v-model:show="showCreate" preset="card" title="New Team" style="width: 420px">
     <n-form>
       <n-form-item label="Name"><n-input v-model:value="createForm.name" /></n-form-item>
-      <n-form-item label="CPU quota (millicores)"><n-input-number v-model:value="createForm.quotaCpu" style="width: 100%" /></n-form-item>
-      <n-form-item label="Memory quota (bytes)"><n-input-number v-model:value="createForm.quotaMemory" style="width: 100%" /></n-form-item>
+      <n-form-item label="CPU quota (cores)"><n-input-number v-model:value="createForm.quotaCpu" :min="0" :step="0.1" style="width: 100%" /></n-form-item>
+      <n-form-item label="Memory quota (MB)"><n-input-number v-model:value="createForm.quotaMemory" :min="0" style="width: 100%" /></n-form-item>
       <n-form-item label="GPU quota"><n-input-number v-model:value="createForm.quotaGpu" style="width: 100%" /></n-form-item>
       <n-button type="primary" block @click="submitCreate">Create</n-button>
     </n-form>
@@ -160,8 +163,8 @@ const columns: DataTableColumns<Team> = [
 
   <n-modal v-model:show="showEdit" preset="card" :title="`Edit quota — ${editTarget?.name}`" style="width: 420px">
     <n-form>
-      <n-form-item label="CPU quota (millicores)"><n-input-number v-model:value="editForm.quotaCpu" style="width: 100%" /></n-form-item>
-      <n-form-item label="Memory quota (bytes)"><n-input-number v-model:value="editForm.quotaMemory" style="width: 100%" /></n-form-item>
+      <n-form-item label="CPU quota (cores)"><n-input-number v-model:value="editForm.quotaCpu" :min="0" :step="0.1" style="width: 100%" /></n-form-item>
+      <n-form-item label="Memory quota (MB)"><n-input-number v-model:value="editForm.quotaMemory" :min="0" style="width: 100%" /></n-form-item>
       <n-form-item label="GPU quota"><n-input-number v-model:value="editForm.quotaGpu" style="width: 100%" /></n-form-item>
       <n-button type="primary" block @click="submitEdit">Save</n-button>
     </n-form>
