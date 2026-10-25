@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NDropdown, NAvatar, NSpace, NText } from 'naive-ui'
+import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NDropdown, NAvatar, NSpace, NText, NButton } from 'naive-ui'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useThemeStore } from '../stores/theme'
 
 const auth = useAuthStore()
+const theme = useThemeStore()
 const router = useRouter()
 
 const menuOptions = computed(() =>
@@ -44,6 +46,9 @@ function handleUserAction(key: string) {
               <n-text>{{ auth.user?.displayName }}</n-text>
             </n-space>
           </n-dropdown>
+          <n-button text style="font-size: 18px" @click="theme.toggle()">
+            {{ theme.mode === 'dark' ? '☀️' : '🌙' }}
+          </n-button>
         </n-space>
       </n-layout-header>
       <n-layout-content class="content">
