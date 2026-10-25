@@ -6,6 +6,7 @@ import {
 import type { DataTableColumns } from 'naive-ui'
 import client from '../../api/client'
 import type { SizePreset } from '../../types'
+import { coresToMillicores, millicoresToCores, mbToBytes, bytesToMB, gbToBytes, bytesToGB } from '../../utils/units'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -37,7 +38,11 @@ function openCreate() {
 
 async function submitCreate() {
   try {
-    await client.post('/size-presets', createForm.value)
+    const { name, cpuRequest, memoryRequest, gpuRequest, storage } = createForm.value
+    await client.post('/size-presets', {
+      name, gpuRequest,
+      cpuRequest: coresToMillicores(cpuRequest), memoryRequest: mbToBytes(memoryRequest), storage: gbToBytes(storage),
+    })
     message.success('Size preset created')
     showCreate.value = false
     await load()
@@ -53,14 +58,21 @@ const editForm = ref({ name: '', cpuRequest: 0, memoryRequest: 0, gpuRequest: 0,
 
 function openEdit(p: SizePreset) {
   editTarget.value = p
-  editForm.value = { name: p.name, cpuRequest: p.cpuRequest, memoryRequest: p.memoryRequest, gpuRequest: p.gpuRequest, storage: p.storage }
+  editForm.value = {
+    name: p.name, gpuRequest: p.gpuRequest,
+    cpuRequest: millicoresToCores(p.cpuRequest), memoryRequest: bytesToMB(p.memoryRequest), storage: bytesToGB(p.storage),
+  }
   showEdit.value = true
 }
 
 async function submitEdit() {
   if (!editTarget.value) return
   try {
-    await client.patch(`/size-presets/${editTarget.value.id}`, editForm.value)
+    const { name, cpuRequest, memoryRequest, gpuRequest, storage } = editForm.value
+    await client.patch(`/size-presets/${editTarget.value.id}`, {
+      name, gpuRequest,
+      cpuRequest: coresToMillicores(cpuRequest), memoryRequest: mbToBytes(memoryRequest), storage: gbToBytes(storage),
+    })
     message.success('Size preset updated')
     showEdit.value = false
     await load()
@@ -90,10 +102,10 @@ function confirmDelete(p: SizePreset) {
 
 const columns: DataTableColumns<SizePreset> = [
   { title: 'Name', key: 'name' },
-  { title: 'CPU (millicores)', key: 'cpuRequest' },
-  { title: 'Memory (bytes)', key: 'memoryRequest' },
+  { title: 'CPU (cores)', key: 'cpuRequest', render: (row) => millicoresToCores(row.cpuRequest) },
+  { title: 'Memory (MB)', key: 'memoryRequest', render: (row) => Math.round(bytesToMB(row.memoryRequest)) },
   { title: 'GPU', key: 'gpuRequest' },
-  { title: 'Storage (bytes)', key: 'storage' },
+  { title: 'Storage (GB)', key: 'storage', render: (row) => Math.round(bytesToGB(row.storage)) },
   {
     title: '',
     key: 'actions',
@@ -117,10 +129,10 @@ const columns: DataTableColumns<SizePreset> = [
   <n-modal v-model:show="showCreate" preset="card" title="New Size Preset" style="width: 420px">
     <n-form>
       <n-form-item label="Name"><n-input v-model:value="createForm.name" placeholder="small" /></n-form-item>
-      <n-form-item label="CPU (millicores)"><n-input-number v-model:value="createForm.cpuRequest" :min="0" style="width: 100%" /></n-form-item>
-      <n-form-item label="Memory (bytes)"><n-input-number v-model:value="createForm.memoryRequest" :min="0" style="width: 100%" /></n-form-item>
+      <n-form-item label="CPU (cores)"><n-input-number v-model:value="createForm.cpuRequest" :min="0" :step="0.1" placeholder="0.5" style="width: 100%" /></n-form-item>
+      <n-form-item label="Memory (MB)"><n-input-number v-model:value="createForm.memoryRequest" :min="0" placeholder="512" style="width: 100%" /></n-form-item>
       <n-form-item label="GPU"><n-input-number v-model:value="createForm.gpuRequest" :min="0" style="width: 100%" /></n-form-item>
-      <n-form-item label="Storage (bytes)"><n-input-number v-model:value="createForm.storage" :min="0" style="width: 100%" /></n-form-item>
+      <n-form-item label="Storage (GB)"><n-input-number v-model:value="createForm.storage" :min="0" placeholder="10" style="width: 100%" /></n-form-item>
       <n-button type="primary" block @click="submitCreate">Create</n-button>
     </n-form>
   </n-modal>
@@ -128,10 +140,10 @@ const columns: DataTableColumns<SizePreset> = [
   <n-modal v-model:show="showEdit" preset="card" :title="`Edit — ${editTarget?.name}`" style="width: 420px">
     <n-form>
       <n-form-item label="Name"><n-input v-model:value="editForm.name" /></n-form-item>
-      <n-form-item label="CPU (millicores)"><n-input-number v-model:value="editForm.cpuRequest" :min="0" style="width: 100%" /></n-form-item>
-      <n-form-item label="Memory (bytes)"><n-input-number v-model:value="editForm.memoryRequest" :min="0" style="width: 100%" /></n-form-item>
+      <n-form-item label="CPU (cores)"><n-input-number v-model:value="editForm.cpuRequest" :min="0" :step="0.1" style="width: 100%" /></n-form-item>
+      <n-form-item label="Memory (MB)"><n-input-number v-model:value="editForm.memoryRequest" :min="0" style="width: 100%" /></n-form-item>
       <n-form-item label="GPU"><n-input-number v-model:value="editForm.gpuRequest" :min="0" style="width: 100%" /></n-form-item>
-      <n-form-item label="Storage (bytes)"><n-input-number v-model:value="editForm.storage" :min="0" style="width: 100%" /></n-form-item>
+      <n-form-item label="Storage (GB)"><n-input-number v-model:value="editForm.storage" :min="0" style="width: 100%" /></n-form-item>
       <n-button type="primary" block @click="submitEdit">Save</n-button>
     </n-form>
   </n-modal>

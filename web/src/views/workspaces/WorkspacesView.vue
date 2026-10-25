@@ -7,6 +7,7 @@ import type { DataTableColumns } from 'naive-ui'
 import client from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
 import type { Team, Workspace, WorkspaceCatalog } from '../../types'
+import { millicoresToCores, bytesToMB } from '../../utils/units'
 
 const auth = useAuthStore()
 const isMember = computed(() => auth.user?.role === 'member')
@@ -86,7 +87,7 @@ const teamOptions = () => myTeams.value.map((t) => ({ label: t.name, value: t.id
 const imageOptions = () => (catalog.value?.images ?? []).map((i) => ({ label: i, value: i }))
 const sizeOptions = () =>
   (catalog.value?.sizes ?? []).map((s) => ({
-    label: `${s.size} (${s.cpu}m CPU, ${(s.memory / 2 ** 30).toFixed(0)}Gi mem${s.gpu ? `, ${s.gpu} GPU` : ''})`,
+    label: `${s.size} (${millicoresToCores(s.cpu)} CPU, ${Math.round(bytesToMB(s.memory))}MB mem${s.gpu ? `, ${s.gpu} GPU` : ''})`,
     value: s.size,
   }))
 
@@ -186,7 +187,7 @@ const columns = computed<DataTableColumns<Workspace>>(() => {
         <n-select v-model:value="createForm.size" :options="sizeOptions()" placeholder="Select size" />
       </n-form-item>
       <p v-if="catalog" style="font-size: 12px; opacity: 0.7; margin-bottom: 16px">
-        Team quota: {{ catalog.teamQuota.cpu }}m CPU / {{ (catalog.teamQuota.memory / 2 ** 30).toFixed(0) }}Gi mem / {{ catalog.teamQuota.gpu }} GPU
+        Team quota: {{ millicoresToCores(catalog.teamQuota.cpu) }} CPU / {{ Math.round(bytesToMB(catalog.teamQuota.memory)) }}MB mem / {{ catalog.teamQuota.gpu }} GPU
       </p>
       <n-button type="primary" block @click="submitCreate">Create</n-button>
     </n-form>
