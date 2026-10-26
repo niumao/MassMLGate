@@ -97,12 +97,15 @@ func namespaceSlug(ns string) string  { return fmt.Sprintf("mlops-t-%s", ns) }
 
 func (p *ClientGoWorkspaceProvisioner) Create(ctx context.Context, tenantNamespace string, w *biz.Workspace, onStatus StatusFunc) {
 	ns := namespaceSlug(tenantNamespace)
+	log.Printf("[k8s] Create: workspace=%s ns=%s image=%s cpu=%dm memory=%dB gpu=%d storage=%dB", w.ID, ns, w.ImageKey, w.CPURequest, w.MemoryRequest, w.GPURequest, w.StorageRequest)
 
 	sts := p.buildStatefulSet(ns, tenantNamespace, w, 1)
 	if _, err := p.clientset.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{}); err != nil {
+		log.Printf("[k8s] Create: StatefulSet create FAILED for workspace=%s ns=%s: %v", w.ID, ns, err)
 		onStatus(biz.WorkspaceFailed, err.Error(), "")
 		return
 	}
+	log.Printf("[k8s] Create: StatefulSet %s created in ns=%s", stsName(w), ns)
 
 	port := biz.ImagePorts[w.ImageKey]
 	svc := &corev1.Service{
@@ -113,9 +116,11 @@ func (p *ClientGoWorkspaceProvisioner) Create(ctx context.Context, tenantNamespa
 		},
 	}
 	if _, err := p.clientset.CoreV1().Services(ns).Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+		log.Printf("[k8s] Create: Service create FAILED for workspace=%s ns=%s: %v", w.ID, ns, err)
 		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
 		return
 	}
+	log.Printf("[k8s] Create: Service %s created in ns=%s, polling for pod %s", svcName(w), ns, podName(w))
 
 	p.pollForRunning(ctx, ns, podName(w), onStatus)
 }
@@ -180,20 +185,35 @@ func (p *ClientGoWorkspaceProvisioner) buildStatefulSet(ns, tenantNamespace stri
 
 func (p *ClientGoWorkspaceProvisioner) pollForRunning(ctx context.Context, ns, podName string, onStatus StatusFunc) {
 	deadline := time.Now().Add(2 * time.Minute)
+	var lastSeenPhase corev1.PodPhase
+	var lastSeenErr error
 	for time.Now().Before(deadline) {
 		pod, err := p.clientset.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
-		if err == nil {
-			switch pod.Status.Phase {
-			case corev1.PodRunning:
-				onStatus(biz.WorkspaceRunning, "", podName)
-				return
-			case corev1.PodFailed:
-				onStatus(biz.WorkspaceFailed, podLastError(pod), podName)
-				return
+		if err != nil {
+			if lastSeenErr == nil || lastSeenErr.Error() != err.Error() {
+				log.Printf("[k8s] pollForRunning: ns=%s pod=%s not retrievable yet: %v", ns, podName, err)
+				lastSeenErr = err
 			}
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if pod.Status.Phase != lastSeenPhase {
+			log.Printf("[k8s] pollForRunning: ns=%s pod=%s phase=%s", ns, podName, pod.Status.Phase)
+			lastSeenPhase = pod.Status.Phase
+		}
+		switch pod.Status.Phase {
+		case corev1.PodRunning:
+			onStatus(biz.WorkspaceRunning, "", podName)
+			return
+		case corev1.PodFailed:
+			msg := podLastError(pod)
+			log.Printf("[k8s] pollForRunning: ns=%s pod=%s FAILED: %s", ns, podName, msg)
+			onStatus(biz.WorkspaceFailed, msg, podName)
+			return
 		}
 		time.Sleep(5 * time.Second)
 	}
+	log.Printf("[k8s] pollForRunning: ns=%s pod=%s TIMED OUT after 2m (last phase=%q, last get error=%v)", ns, podName, lastSeenPhase, lastSeenErr)
 	onStatus(biz.WorkspaceFailed, "timed out waiting for pod to become Running", podName)
 }
 
@@ -214,8 +234,10 @@ func podLastError(pod *corev1.Pod) string {
 // way out would be deleting and recreating the workspace from scratch.
 func (p *ClientGoWorkspaceProvisioner) Start(ctx context.Context, tenantNamespace string, w *biz.Workspace, onStatus StatusFunc) {
 	ns := namespaceSlug(tenantNamespace)
+	log.Printf("[k8s] Start: workspace=%s ns=%s sts=%s", w.ID, ns, stsName(w))
 	existing, err := p.clientset.AppsV1().StatefulSets(ns).Get(ctx, stsName(w), metav1.GetOptions{})
 	if err != nil {
+		log.Printf("[k8s] Start: StatefulSet %s not found in ns=%s: %v", stsName(w), ns, err)
 		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
 		return
 	}
@@ -223,16 +245,25 @@ func (p *ClientGoWorkspaceProvisioner) Start(ctx context.Context, tenantNamespac
 	existing.Spec.Replicas = &replicas
 	existing.Spec.Template = p.buildStatefulSet(ns, tenantNamespace, w, 1).Spec.Template
 	if _, err := p.clientset.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		log.Printf("[k8s] Start: StatefulSet %s update FAILED in ns=%s: %v", stsName(w), ns, err)
 		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
 		return
 	}
+	log.Printf("[k8s] Start: StatefulSet %s scaled to 1 replica in ns=%s, polling for pod %s", stsName(w), ns, podName(w))
 	p.pollForRunning(ctx, ns, podName(w), onStatus)
 }
 
 // Stop scales to 0 replicas — this is the only thing that actually frees
 // the Pod's GPU/CPU/memory. The StatefulSet, Service, and PVC all stay.
 func (p *ClientGoWorkspaceProvisioner) Stop(ctx context.Context, tenantNamespace string, w *biz.Workspace) error {
-	return p.scale(ctx, namespaceSlug(tenantNamespace), stsName(w), 0)
+	ns := namespaceSlug(tenantNamespace)
+	err := p.scale(ctx, ns, stsName(w), 0)
+	if err != nil {
+		log.Printf("[k8s] Stop: FAILED for workspace=%s ns=%s: %v", w.ID, ns, err)
+	} else {
+		log.Printf("[k8s] Stop: workspace=%s ns=%s scaled to 0 replicas", w.ID, ns)
+	}
+	return err
 }
 
 func (p *ClientGoWorkspaceProvisioner) scale(ctx context.Context, ns, name string, replicas int32) error {
@@ -249,10 +280,13 @@ func (p *ClientGoWorkspaceProvisioner) scale(ctx context.Context, ns, name strin
 // PersistentVolumeClaimRetentionPolicy, the PVC/saved data) and the Service.
 func (p *ClientGoWorkspaceProvisioner) Delete(ctx context.Context, tenantNamespace string, w *biz.Workspace) error {
 	ns := namespaceSlug(tenantNamespace)
+	log.Printf("[k8s] Delete: workspace=%s ns=%s", w.ID, ns)
 	if err := p.clientset.AppsV1().StatefulSets(ns).Delete(ctx, stsName(w), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		log.Printf("[k8s] Delete: StatefulSet delete FAILED for workspace=%s ns=%s: %v", w.ID, ns, err)
 		return err
 	}
 	if err := p.clientset.CoreV1().Services(ns).Delete(ctx, svcName(w), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		log.Printf("[k8s] Delete: Service delete FAILED for workspace=%s ns=%s: %v", w.ID, ns, err)
 		return err
 	}
 	return nil

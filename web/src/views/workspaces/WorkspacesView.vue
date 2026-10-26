@@ -148,6 +148,11 @@ const columns = computed<DataTableColumns<Workspace>>(() => {
       key: 'status',
       render: (row) => h(NTag, { type: statusType[row.status], size: 'small' }, { default: () => row.status }),
     },
+    {
+      title: 'Error',
+      key: 'errorMessage',
+      render: (row) => row.errorMessage || '—',
+    },
   ]
   if (isMember.value) {
     cols.push({
