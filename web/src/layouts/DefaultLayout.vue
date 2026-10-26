@@ -46,7 +46,14 @@ function handleUserAction(key: string) {
               <n-text>{{ auth.user?.displayName }}</n-text>
             </n-space>
           </n-dropdown>
-          <n-button text style="font-size: 18px" @click="theme.toggle()">
+          <n-button
+            circle
+            quaternary
+            size="medium"
+            :title="theme.mode === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+            style="font-size: 16px"
+            @click="theme.toggle()"
+          >
             {{ theme.mode === 'dark' ? '☀️' : '🌙' }}
           </n-button>
         </n-space>

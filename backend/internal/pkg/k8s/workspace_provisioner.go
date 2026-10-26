@@ -150,7 +150,7 @@ func (p *ClientGoWorkspaceProvisioner) buildStatefulSet(ns, tenantNamespace stri
 						Name:         "workspace",
 						Image:        workspaceImages[w.ImageKey],
 						Ports:        []corev1.ContainerPort{{ContainerPort: int32(port)}},
-						Resources:    corev1.ResourceRequirements{Requests: resourceList(w)},
+						Resources:    corev1.ResourceRequirements{Requests: resourceList(w), Limits: resourceLimits(w)},
 						VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: workDir[w.ImageKey]}},
 					}},
 				},
@@ -254,4 +254,19 @@ func resourceList(w *biz.Workspace) corev1.ResourceList {
 		rl["nvidia.com/gpu"] = *resource.NewQuantity(int64(w.GPURequest), resource.DecimalSI)
 	}
 	return rl
+}
+
+// resourceLimits returns a Limit only for nvidia.com/gpu (nil otherwise).
+// Extended/device-plugin resources like GPU aren't overcommitable — the k8s
+// API rejects any Pod that requests one without an equal Limit ("Limit must
+// be set for non overcommitable resources"), unlike cpu/memory which are
+// fine as request-only (burstable). This intentionally leaves cpu/memory
+// request-only; only the GPU entry needs a matching Limit.
+func resourceLimits(w *biz.Workspace) corev1.ResourceList {
+	if w.GPURequest <= 0 {
+		return nil
+	}
+	return corev1.ResourceList{
+		"nvidia.com/gpu": *resource.NewQuantity(int64(w.GPURequest), resource.DecimalSI),
+	}
 }
