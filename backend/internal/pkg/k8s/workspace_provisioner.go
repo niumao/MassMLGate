@@ -204,12 +204,25 @@ func podLastError(pod *corev1.Pod) string {
 	return "pod failed"
 }
 
-// Start scales an *existing* StatefulSet back up to 1 replica — unlike
-// Create, it never touches the Service or the StatefulSet's spec/PVC
-// template, so the same PVC from before Stop reattaches unchanged.
+// Start scales an *existing* StatefulSet back up to 1 replica and refreshes
+// its Pod template (Spec.Template only — never Selector/ServiceName/
+// VolumeClaimTemplates, which are immutable and untouched, so the same PVC
+// from before Stop reattaches unchanged) to match what buildStatefulSet
+// would produce for w today. Without this, a StatefulSet created before a
+// fix to buildStatefulSet (e.g. a missing resource Limit) would keep
+// re-applying its stale, broken template forever on every Start — the only
+// way out would be deleting and recreating the workspace from scratch.
 func (p *ClientGoWorkspaceProvisioner) Start(ctx context.Context, tenantNamespace string, w *biz.Workspace, onStatus StatusFunc) {
 	ns := namespaceSlug(tenantNamespace)
-	if err := p.scale(ctx, ns, stsName(w), 1); err != nil {
+	existing, err := p.clientset.AppsV1().StatefulSets(ns).Get(ctx, stsName(w), metav1.GetOptions{})
+	if err != nil {
+		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
+		return
+	}
+	replicas := int32(1)
+	existing.Spec.Replicas = &replicas
+	existing.Spec.Template = p.buildStatefulSet(ns, tenantNamespace, w, 1).Spec.Template
+	if _, err := p.clientset.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
 		return
 	}
