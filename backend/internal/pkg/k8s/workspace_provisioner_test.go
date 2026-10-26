@@ -62,3 +62,27 @@ func TestBuildStatefulSet_NoGPU_NoLimits(t *testing.T) {
 		t.Fatalf("Limits = %v, want nil for a non-GPU workspace", limits)
 	}
 }
+
+// Regression test for: Kueue never actually managing/quota-gating any
+// workspace, because the queue-name marker was on the Pod template's
+// annotations instead of the StatefulSet's own label. Kueue's StatefulSet
+// integration specifically requires kueue.x-k8s.io/queue-name as a LABEL on
+// the StatefulSet itself — Kueue's own controller copies/gates it onto the
+// Pods it manages, once it sees the parent StatefulSet carries it.
+func TestBuildStatefulSet_KueueQueueName_OnStatefulSetLabelNotPodAnnotation(t *testing.T) {
+	p := &ClientGoWorkspaceProvisioner{}
+	w := &biz.Workspace{ID: "ws-3", ImageKey: "jupyter", CPURequest: 500, MemoryRequest: 1 << 30}
+
+	sts := p.buildStatefulSet("ns-1", "tenant-1", w, 1)
+
+	want := LocalQueueName("tenant-1")
+	if got := sts.ObjectMeta.Labels["kueue.x-k8s.io/queue-name"]; got != want {
+		t.Fatalf("StatefulSet label kueue.x-k8s.io/queue-name = %q, want %q", got, want)
+	}
+	if _, ok := sts.Spec.Template.ObjectMeta.Annotations["kueue.x-k8s.io/queue-name"]; ok {
+		t.Fatalf("queue-name must not be set as a Pod template annotation — Kueue's StatefulSet integration ignores it there")
+	}
+	if _, ok := sts.Spec.Selector.MatchLabels["kueue.x-k8s.io/queue-name"]; ok {
+		t.Fatalf("Selector.MatchLabels must stay pure Pod identity — it must not include the queue-name config label")
+	}
+}

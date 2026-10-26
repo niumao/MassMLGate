@@ -131,24 +131,35 @@ func (p *ClientGoWorkspaceProvisioner) Create(ctx context.Context, tenantNamespa
 // whole Pod/PVC shape in one spot, instead of split across Create/Start.
 func (p *ClientGoWorkspaceProvisioner) buildStatefulSet(ns, tenantNamespace string, w *biz.Workspace, desiredReplicas int32) *appsv1.StatefulSet {
 	port := biz.ImagePorts[w.ImageKey]
-	labels := map[string]string{"app": "workspace", "workspace-id": w.ID}
+	// podLabels is Pod identity only — it's reused as Selector.MatchLabels,
+	// which must stay immutable and must exactly match the Pod template's
+	// labels for the StatefulSet controller to work. The Kueue queue-name
+	// below is configuration, not identity, so it deliberately lives in a
+	// separate map and only on the StatefulSet's own ObjectMeta.
+	podLabels := map[string]string{"app": "workspace", "workspace-id": w.ID}
+	stsLabels := map[string]string{
+		"app": "workspace", "workspace-id": w.ID,
+		// This is the one line that makes the StatefulSet Kueue-aware.
+		// Kueue's StatefulSet integration expects this as a LABEL on the
+		// StatefulSet itself (not an annotation on the Pod template, which
+		// is the wrong place for this integration — Kueue's own controller
+		// is what copies/gates the label down onto the Pods it manages,
+		// once it sees the parent StatefulSet carries it). Kueue then holds
+		// new Pods via a scheduling gate until the tenant's LocalQueue has
+		// room, per the Kueue model explained alongside
+		// internal/pkg/k8s/provisioner.go.
+		"kueue.x-k8s.io/queue-name": LocalQueueName(tenantNamespace),
+	}
 
 	return &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: stsName(w), Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: stsName(w), Namespace: ns, Labels: stsLabels},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas:    &desiredReplicas,
 			ServiceName: svcName(w),
-			Selector:    &metav1.LabelSelector{MatchLabels: labels},
+			Selector:    &metav1.LabelSelector{MatchLabels: podLabels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-					Annotations: map[string]string{
-						// This is the one line that makes the Pod Kueue-aware —
-						// Kueue's admission webhook holds it until the tenant's
-						// LocalQueue has room, per the Kueue model explained
-						// alongside internal/pkg/k8s/provisioner.go.
-						"kueue.x-k8s.io/queue-name": LocalQueueName(tenantNamespace),
-					},
+					Labels: podLabels,
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
@@ -225,13 +236,14 @@ func podLastError(pod *corev1.Pod) string {
 }
 
 // Start scales an *existing* StatefulSet back up to 1 replica and refreshes
-// its Pod template (Spec.Template only — never Selector/ServiceName/
+// its Pod template and own ObjectMeta.Labels (never Selector/ServiceName/
 // VolumeClaimTemplates, which are immutable and untouched, so the same PVC
 // from before Stop reattaches unchanged) to match what buildStatefulSet
 // would produce for w today. Without this, a StatefulSet created before a
-// fix to buildStatefulSet (e.g. a missing resource Limit) would keep
-// re-applying its stale, broken template forever on every Start — the only
-// way out would be deleting and recreating the workspace from scratch.
+// fix to buildStatefulSet (e.g. a missing resource Limit, or the Kueue
+// queue-name label) would keep re-applying its stale state forever on
+// every Start — the only way out would be deleting and recreating the
+// workspace from scratch.
 func (p *ClientGoWorkspaceProvisioner) Start(ctx context.Context, tenantNamespace string, w *biz.Workspace, onStatus StatusFunc) {
 	ns := namespaceSlug(tenantNamespace)
 	log.Printf("[k8s] Start: workspace=%s ns=%s sts=%s", w.ID, ns, stsName(w))
@@ -241,9 +253,11 @@ func (p *ClientGoWorkspaceProvisioner) Start(ctx context.Context, tenantNamespac
 		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
 		return
 	}
+	desired := p.buildStatefulSet(ns, tenantNamespace, w, 1)
 	replicas := int32(1)
 	existing.Spec.Replicas = &replicas
-	existing.Spec.Template = p.buildStatefulSet(ns, tenantNamespace, w, 1).Spec.Template
+	existing.Spec.Template = desired.Spec.Template
+	existing.ObjectMeta.Labels = desired.ObjectMeta.Labels
 	if _, err := p.clientset.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		log.Printf("[k8s] Start: StatefulSet %s update FAILED in ns=%s: %v", stsName(w), ns, err)
 		onStatus(biz.WorkspaceFailed, err.Error(), podName(w))
